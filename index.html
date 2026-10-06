@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>多平台交易損益紀錄工具 (雲端同步版)</title>
+    <title>多平台交易損益紀錄工具 (雲端同步 + JSON 匯入版)</title>
     <!-- 引入 Tailwind CSS 快速樣式庫 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 引入 Chart.js 圖表庫 -->
@@ -25,6 +25,9 @@
             <div class="flex flex-wrap items-center gap-3">
                 <label class="text-sm text-slate-300">統計月份：</label>
                 <input type="month" id="monthFilter" onchange="renderApp()" class="bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                <!-- 匯入與匯出按鈕 -->
+                <button onclick="document.getElementById('importFileInput').click()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-sm border border-slate-600 transition">匯入 JSON</button>
+                <input type="file" id="importFileInput" accept=".json" onchange="importData(event)" class="hidden">
                 <button onclick="exportData()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-sm border border-slate-600 transition">匯出 JSON</button>
             </div>
         </div>
@@ -160,7 +163,6 @@
             recordsRef.on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data) {
-                    // 若雲端回傳物件格式，轉為陣列
                     records = Array.isArray(data) ? data : Object.values(data);
                 } else {
                     records = [];
@@ -174,161 +176,23 @@
             recordsRef.set(records);
         }
 
-        // 新增紀錄處理
-        function handleAddRecord(e) {
-            e.preventDefault();
-            
-            const newRecord = {
-                id: Date.now().toString(),
-                date: document.getElementById('inputDate').value,
-                platform: document.getElementById('inputPlatform').value.trim(),
-                asset: document.getElementById('inputAsset').value.trim(),
-                pnl: parseFloat(document.getElementById('inputPnL').value) || 0,
-                fee: parseFloat(document.getElementById('inputFee').value) || 0,
-                note: document.getElementById('inputNote').value.trim()
-            };
+        // ----------------------------------------------------
+        // 2. 匯入 JSON 檔案邏輯
+        // ----------------------------------------------------
+        function importData(e) {
+            const file = e.target.files[0];
+            if (!file) return;
 
-            records.push(newRecord);
-            saveData();
-
-            const recordMonth = newRecord.date.slice(0, 7);
-            document.getElementById('monthFilter').value = recordMonth;
-
-            // 清空輸入欄位
-            document.getElementById('inputAsset').value = '';
-            document.getElementById('inputPnL').value = '';
-            document.getElementById('inputFee').value = '0';
-            document.getElementById('inputNote').value = '';
-
-            renderApp();
-        }
-
-        // 刪除紀錄
-        function deleteRecord(id) {
-            if (confirm('確定要刪除這筆紀錄嗎？')) {
-                records = records.filter(r => r.id !== id);
-                saveData();
-                renderApp();
-            }
-        }
-
-        // 主渲染邏輯
-        function renderApp() {
-            const selectedMonth = document.getElementById('monthFilter').value;
-            
-            const filteredRecords = records.filter(r => r.date && r.date.startsWith(selectedMonth));
-            filteredRecords.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-            let totalNetPnL = 0;
-            let totalFee = 0;
-            let winCount = 0;
-            const platformPnLMap = {};
-
-            filteredRecords.forEach(r => {
-                const net = r.pnl - r.fee;
-                totalNetPnL += net;
-                totalFee += r.fee;
-                if (net > 0) winCount++;
-
-                platformPnLMap[r.platform] = (platformPnLMap[r.platform] || 0) + net;
-            });
-
-            const totalCount = filteredRecords.length;
-            const winRate = totalCount > 0 ? ((winCount / totalCount) * 100).toFixed(1) : '0.0';
-
-            // 更新統計卡片
-            const pnlElem = document.getElementById('statMonthlyPnL');
-            pnlElem.textContent = `$ ${totalNetPnL.toLocaleString()}`;
-            pnlElem.className = `text-2xl font-extrabold mt-2 ${totalNetPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
-
-            document.getElementById('statWinRate').textContent = `${winRate} %`;
-            document.getElementById('statTotalCount').textContent = `${totalCount} 筆`;
-            document.getElementById('statTotalFee').textContent = `$ ${totalFee.toLocaleString()}`;
-
-            // 渲染表格
-            const tableBody = document.getElementById('recordsTableBody');
-            if (filteredRecords.length === 0) {
-                tableBody.innerHTML = `<tr><td colspan="8" class="text-center py-6 text-slate-500">當月無交易紀錄</td></tr>`;
-            } else {
-                tableBody.innerHTML = filteredRecords.map(r => {
-                    const netPnL = r.pnl - r.fee;
-                    const pnlClass = netPnL >= 0 ? 'text-emerald-400' : 'text-rose-400';
-                    return `
-                        <tr class="hover:bg-slate-700/30 transition">
-                            <td class="py-3 px-4 font-mono text-slate-300">${r.date}</td>
-                            <td class="py-3 px-4"><span class="bg-slate-700 text-slate-300 text-xs px-2 py-1 rounded border border-slate-600">${r.platform}</span></td>
-                            <td class="py-3 px-4 font-medium">${r.asset}</td>
-                            <td class="py-3 px-4 text-right font-mono text-slate-300">${r.pnl.toLocaleString()}</td>
-                            <td class="py-3 px-4 text-right font-mono text-slate-400">${r.fee.toLocaleString()}</td>
-                            <td class="py-3 px-4 text-right font-mono font-bold ${pnlClass}">${netPnL > 0 ? '+' : ''}${netPnL.toLocaleString()}</td>
-                            <td class="py-3 px-4 text-slate-400 text-xs max-w-[150px] truncate">${r.note || '-'}</td>
-                            <td class="py-3 px-4 text-center">
-                                <button onclick="deleteRecord('${r.id}')" class="text-slate-500 hover:text-rose-400 transition text-xs">刪除</button>
-                            </td>
-                        </tr>
-                    `;
-                }).join('');
-            }
-
-            renderChart(platformPnLMap);
-        }
-
-        // 渲染 Chart.js 平台損益圖表
-        function renderChart(platformData) {
-            const ctx = document.getElementById('platformChart').getContext('2d');
-            const labels = Object.keys(platformData);
-            const dataValues = Object.values(platformData);
-
-            if (chartInstance) {
-                chartInstance.destroy();
-            }
-
-            const backgroundColors = dataValues.map(val => val >= 0 ? 'rgba(52, 211, 153, 0.7)' : 'rgba(251, 113, 133, 0.7)');
-            const borderColors = dataValues.map(val => val >= 0 ? '#10b981' : '#f43f5e');
-
-            chartInstance = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels.length > 0 ? labels : ['無資料'],
-                    datasets: [{
-                        label: '當月淨損益',
-                        data: labels.length > 0 ? dataValues : [0],
-                        backgroundColor: backgroundColors,
-                        borderColor: borderColors,
-                        borderWidth: 1.5,
-                        borderRadius: 6
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    },
-                    scales: {
-                        x: {
-                            ticks: { color: '#94a3b8' },
-                            grid: { color: '#334155' }
-                        },
-                        y: {
-                            ticks: { color: '#94a3b8' },
-                            grid: { color: '#334155' }
-                        }
-                    }
-                }
-            });
-        }
-
-        // 匯出 JSON 資料備份
-        function exportData() {
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(records, null, 2));
-            const downloadAnchor = document.createElement('a');
-            downloadAnchor.setAttribute("href", dataStr);
-            downloadAnchor.setAttribute("download", `pnl_backup_${new Date().toISOString().slice(0,10)}.json`);
-            document.body.appendChild(downloadAnchor);
-            downloadAnchor.click();
-            downloadAnchor.remove();
-        }
-    </script>
-</body>
-</html>
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    const importedRecords = JSON.parse(event.target.result);
+                    if (Array.isArray(importedRecords)) {
+                        // 詢問使用者要「覆蓋」還是「合併」現有資料
+                        const isOverwrite = confirm('點擊「確定」將【覆蓋】雲端資料；點擊「取消」將【合併】新舊資料。');
+                        
+                        if (isOverwrite) {
+                            records = importedRecords;
+                        } else {
+                            // 合併並過濾重複的 ID
+                            const existingIds = new Set(records.
