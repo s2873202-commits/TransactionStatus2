@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多平台交易損益紀錄工具 (雲端同步版)</title>
+    <!-- 引入 Tailwind CSS 快速樣式庫 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Chart.js 圖表庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- 引入 Firebase 8.x 庫 -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto space-y-6">
+        
+        <!-- 頁首與操作 -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
+            <div>
+                <h1 class="text-2xl font-bold text-emerald-400">📊 多平台交易損益紀錄工具</h1>
+                <p class="text-slate-400 text-sm mt-1">追蹤各平台交易績效與當月總體統計（雲端即時同步中）</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+                <label class="text-sm text-slate-300">統計月份：</label>
+                <input type="month" id="monthFilter" onchange="renderApp()" class="bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                <button onclick="exportData()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-sm border border-slate-600 transition">匯出 JSON</button>
+            </div>
+        </div>
+
+        <!-- 當月數據統計卡片 -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-xs text-slate-400 uppercase tracking-wider">當月淨損益 (NTD)</div>
+                <div id="statMonthlyPnL" class="text-2xl font-extrabold mt-2 text-slate-200">$ 0</div>
+            </div>
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-xs text-slate-400 uppercase tracking-wider">當月勝率</div>
+                <div id="statWinRate" class="text-2xl font-bold text-indigo-400 mt-2">0.0 %</div>
+            </div>
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-xs text-slate-400 uppercase tracking-wider">總交易筆數</div>
+                <div id="statTotalCount" class="text-2xl font-bold text-amber-400 mt-2">0 筆</div>
+            </div>
+            <div class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
+                <div class="text-xs text-slate-400 uppercase tracking-wider">累計手續費/稅</div>
+                <div id="statTotalFee" class="text-2xl font-bold text-rose-400 mt-2">$ 0</div>
+            </div>
+        </div>
+
+        <!-- 主要區域：新增表單與平台分佈圖 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <!-- 新增紀錄表單 -->
+            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-md lg:col-span-1">
+                <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">➕ 新增交易紀錄</h2>
+                <form id="pnlForm" onsubmit="handleAddRecord(event)" class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">交易日期</label>
+                        <input type="date" id="inputDate" required class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">交易平台</label>
+                        <input type="text" id="inputPlatform" placeholder="例如：富邦證券、幣安、群益期貨" list="platformOptions" required class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                        <datalist id="platformOptions">
+                            <option value="富邦證券">
+                            <option value="凱基證券">
+                            <option value="元大期貨">
+                            <option value="Binance">
+                        </datalist>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">交易標的</label>
+                        <input type="text" id="inputAsset" placeholder="例如：台積電 (2330)、BTC/USDT" required class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">實現損益 (可為負)</label>
+                            <input type="number" id="inputPnL" placeholder="15000 或 -3000" step="any" required class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">手續費 / 交易稅</label>
+                            <input type="number" id="inputFee" placeholder="0" min="0" step="any" value="0" class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">備註 / 策略</label>
+                        <input type="text" id="inputNote" placeholder="例如：突破追單、當沖停損" class="w-full bg-slate-700 text-white px-3 py-2 rounded-lg border border-slate-600 focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-lg transition shadow-md">儲存紀錄</button>
+                </form>
+            </div>
+
+            <!-- 各平台損益分佈圖表 -->
+            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-md lg:col-span-2 flex flex-col">
+                <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">📈 各平台當月淨損益</h2>
+                <div class="flex-1 min-h-[260px] relative">
+                    <canvas id="platformChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 歷史紀錄明細列表 -->
+        <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-md">
+            <h2 class="text-lg font-semibold text-slate-200 mb-4 border-b border-slate-700 pb-2">📋 當月交易明細</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="text-xs text-slate-400 border-b border-slate-700">
+                            <th class="py-3 px-4">日期</th>
+                            <th class="py-3 px-4">平台</th>
+                            <th class="py-3 px-4">標的</th>
+                            <th class="py-3 px-4 text-right">實現損益</th>
+                            <th class="py-3 px-4 text-right">手續費/稅</th>
+                            <th class="py-3 px-4 text-right">淨損益</th>
+                            <th class="py-3 px-4">備註</th>
+                            <th class="py-3 px-4 text-center">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recordsTableBody" class="divide-y divide-slate-700/50 text-sm">
+                        <!-- 資料會以 JS 動態渲染 -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ----------------------------------------------------
+        // 1. Firebase 金鑰設定（請替換為您自己的專案參數）
+        // ----------------------------------------------------
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        // 初始化 Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        const recordsRef = db.ref('pnl_records');
+
+        let records = [];
+        let chartInstance = null;
+
+        // 頁面初次載入
+        document.addEventListener('DOMContentLoaded', () => {
+            const today = new Date();
+            const yearMonth = today.toISOString().slice(0, 7);
+            document.getElementById('monthFilter').value = yearMonth;
+            document.getElementById('inputDate').value = today.toISOString().slice(0, 10);
+
+            // 監聽 Firebase 雲端資料變更（即時同步）
+            recordsRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    // 若雲端回傳物件格式，轉為陣列
+                    records = Array.isArray(data) ? data : Object.values(data);
+                } else {
+                    records = [];
+                }
+                renderApp();
+            });
+        });
+
+        // 將資料同步寫入 Firebase 雲端
+        function saveData() {
+            recordsRef.set(records);
+        }
+
+        // 新增紀錄處理
+        function handleAddRecord(e) {
+            e.preventDefault();
+            
+            const newRecord = {
+                id: Date.now().toString(),
+                date: document.getElementById('inputDate').value,
+                platform: document.getElementById('inputPlatform').value.trim(),
+                asset: document.getElementById('inputAsset').value.trim(),
+                pnl: parseFloat(document.getElementById('inputPnL').value) || 0,
+                fee: parseFloat(document.getElementById('inputFee').value) || 0,
+                note: document.getElementById('inputNote').value.trim()
+            };
+
+            records.push(newRecord);
+            saveData();
+
+            const recordMonth = newRecord.date.slice(0, 7);
+            document.getElementById('monthFilter').value = recordMonth;
+
+            // 清空輸入欄位
+            document.getElementById('inputAsset').value = '';
+            document.getElementById('inputPnL').value = '';
+            document.getElementById('inputFee').value = '0';
+            document.getElementById('inputNote').value = '';
+
+            renderApp();
+        }
+
+        // 刪除紀錄
+        function deleteRecord(id) {
+            if (confirm('確定要刪除這筆紀錄嗎？')) {
+                records = records.filter(r => r.id !== id);
+                saveData();
+                renderApp();
+            }
+        }
+
+        // 主渲染邏輯
+        function renderApp() {
+            const selectedMonth = document.getElementById('monthFilter').value;
+            
+            const filteredRecords = records.filter(r => r.date && r.date.startsWith(selectedMonth));
+            filteredRecords.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            let totalNetPnL = 0;
+            let totalFee = 0;
+            let winCount = 0;
+            const platformPnLMap = {};
+
+            filteredRecords.forEach(r => {
+                const net = r.pnl - r.fee;
+                totalNetPnL += net;
+                totalFee += r.fee;
+                if (net > 0) winCount++;
+
+                platformPnLMap[r.platform] = (platformPnLMap[r.platform] || 0) + net;
+            });
+
+            const totalCount = filteredRecords.length;
+            const winRate = totalCount > 0 ? ((winCount / totalCount) * 100).toFixed(1) : '0.0';
+
+            // 更新統計卡片
+            const pnlElem = document.getElementById('statMonthlyPnL');
+            pnlElem.textContent = `$ ${totalNetPnL.toLocaleString()}`;
+            pnlElem.className = `text-2xl font-extrabold mt-2 ${totalNetPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+
+            document.getElementById('statWinRate').textContent = `${winRate} %`;
+            document.getElementById('statTotalCount').textContent = `${totalCount} 筆`;
+            document.getElementById('statTotalFee').textContent = `$ ${totalFee.toLocaleString()}`;
+
+            // 渲染表格
+            const tableBody = document.getElementById('recordsTableBody');
+            if (filteredRecords.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="8" class="text-center py-6 text-slate-500">當月無交易紀錄</td></tr>`;
+            } else {
+                tableBody.innerHTML = filteredRecords.map(r => {
+                    const netPnL = r.pnl - r.fee;
+                    const pnlClass = netPnL >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                    return `
+                        <tr class="hover:bg-slate-700/30 transition">
+                            <td class="py-3 px-4 font-mono text-slate-300">${r.date}</td>
+                            <td class="py-3 px-4"><span class="bg-slate-700 text-slate-300 text-xs px-2 py-1 rounded border border-slate-600">${r.platform}</span></td>
+                            <td class="py-3 px-4 font-medium">${r.asset}</td>
+                            <td class="py-3 px-4 text-right font-mono text-slate-300">${r.pnl.toLocaleString()}</td>
+                            <td class="py-3 px-4 text-right font-mono text-slate-400">${r.fee.toLocaleString()}</td>
+                            <td class="py-3 px-4 text-right font-mono font-bold ${pnlClass}">${netPnL > 0 ? '+' : ''}${netPnL.toLocaleString()}</td>
+                            <td class="py-3 px-4 text-slate-400 text-xs max-w-[150px] truncate">${r.note || '-'}</td>
+                            <td class="py-3 px-4 text-center">
+                                <button onclick="deleteRecord('${r.id}')" class="text-slate-500 hover:text-rose-400 transition text-xs">刪除</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            renderChart(platformPnLMap);
+        }
+
+        // 渲染 Chart.js 平台損益圖表
+        function renderChart(platformData) {
+            const ctx = document.getElementById('platformChart').getContext('2d');
+            const labels = Object.keys(platformData);
+            const dataValues = Object.values(platformData);
+
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            const backgroundColors = dataValues.map(val => val >= 0 ? 'rgba(52, 211, 153, 0.7)' : 'rgba(251, 113, 133, 0.7)');
+            const borderColors = dataValues.map(val => val >= 0 ? '#10b981' : '#f43f5e');
+
+            chartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels.length > 0 ? labels : ['無資料'],
+                    datasets: [{
+                        label: '當月淨損益',
+                        data: labels.length > 0 ? dataValues : [0],
+                        backgroundColor: backgroundColors,
+                        borderColor: borderColors,
+                        borderWidth: 1.5,
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        },
+                        y: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 匯出 JSON 資料備份
+        function exportData() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(records, null, 2));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", `pnl_backup_${new Date().toISOString().slice(0,10)}.json`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+        }
+    </script>
+</body>
+</html>
